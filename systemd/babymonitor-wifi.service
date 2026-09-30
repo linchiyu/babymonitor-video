@@ -6,6 +6,7 @@ Before=network-online.target
 
 [Service]
 Type=oneshot
+Environment=BABYMONITOR_CONFIG=/boot/firmware/babymonitor.conf
 ExecStart=/opt/babymonitor/wifi-setup.sh
 TimeoutStartSec=90
 

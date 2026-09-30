@@ -7,6 +7,7 @@ import socketserver
 import sys
 import threading
 from http import server
+from urllib.parse import urlsplit
 
 log = logging.getLogger("babymonitor")
 
@@ -20,7 +21,13 @@ PAGE = b"""<!doctype html>
 <title>Baby Monitor</title>
 <style>html,body{margin:0;height:100%;background:#000}
 img{display:block;width:100%;height:100%;object-fit:contain}</style></head>
-<body><img src="/stream.mjpg" alt="Live camera"></body></html>
+<body><img id="v" src="/stream.mjpg" alt="Live camera">
+<script>
+// Reconnect if the stream drops (Pi rebooted, Wi-Fi blip, camera restart).
+// ponytail: relies on the browser firing onerror; a stream that ends cleanly may just freeze.
+const v = document.getElementById("v");
+v.onerror = () => setTimeout(() => { v.src = "/stream.mjpg?" + Date.now(); }, 2000);
+</script></body></html>
 """
 
 
@@ -28,7 +35,7 @@ def load_config(path):
     """Parse KEY=value lines literally: no shell expansion, one layer of quotes stripped."""
     cfg = dict(DEFAULTS)
     try:
-        f = open(path, encoding="utf-8")
+        f = open(path, encoding="utf-8-sig")  # tolerate a BOM from Windows editors
     except FileNotFoundError:
         return cfg
     with f:
@@ -87,7 +94,10 @@ class StreamingOutput(io.BufferedIOBase):
                 try:
                     self.camera.stop()
                 except Exception:
-                    log.exception("camera failed to stop cleanly")
+                    # A camera stuck mid-recording makes every later start fail; let systemd
+                    # (Restart=always) rebuild it from a fresh process.
+                    log.exception("camera failed to stop; restarting service")
+                    os._exit(1)
                 with self.condition:
                     self.frame = None
                 log.info("camera stopped")
@@ -112,13 +122,14 @@ class PiCamera:
 
 class StreamingHandler(server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/":
+        path = urlsplit(self.path).path
+        if path == "/":
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.send_header("Content-Length", str(len(PAGE)))
             self.end_headers()
             self.wfile.write(PAGE)
-        elif self.path == "/stream.mjpg":
+        elif path == "/stream.mjpg":
             self.stream()
         else:
             self.send_error(404)
@@ -162,16 +173,25 @@ def make_server(output, port):
     return httpd
 
 
+def number(cfg, key):
+    try:
+        return int(cfg[key])
+    except ValueError:
+        log.error("invalid %s=%r in config, using %s", key, cfg[key], DEFAULTS[key])
+        return int(DEFAULTS[key])
+
+
 def main():
     cfg = load_config(os.environ.get("BABYMONITOR_CONFIG", DEFAULT_CONFIG))
     if sys.argv[1:2] == ["--get"]:  # lets the shell scripts share this parser instead of `source`
         print(cfg.get(sys.argv[2], ""))
         return
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    camera = PiCamera(int(cfg["WIDTH"]), int(cfg["HEIGHT"]))
-    output = StreamingOutput(camera, int(cfg["MAX_VIEWERS"]))
-    httpd = make_server(output, int(cfg["PORT"]))
-    log.info("serving on port %s", cfg["PORT"])
+    port = number(cfg, "PORT")
+    camera = PiCamera(number(cfg, "WIDTH"), number(cfg, "HEIGHT"))
+    output = StreamingOutput(camera, number(cfg, "MAX_VIEWERS"))
+    httpd = make_server(output, port)
+    log.info("serving on port %s", port)
     httpd.serve_forever()
 
 

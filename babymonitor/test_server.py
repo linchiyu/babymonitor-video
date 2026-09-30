@@ -1,6 +1,8 @@
 import http.client
 import os
 import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -83,6 +85,10 @@ class ServerTest(unittest.TestCase):
         resp = conn.getresponse()
         self.assertEqual(resp.status, 200)
         self.assertIn(b'src="/stream.mjpg"', resp.read())
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/?cachebust=1")  # the page's reconnect adds a query string
+        self.assertEqual(conn.getresponse().status, 200)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         conn.request("GET", "/nope")
         self.assertEqual(conn.getresponse().status, 404)
 
@@ -161,6 +167,21 @@ class ServerTest(unittest.TestCase):
         s.close()
 
 
+class StopFailureTest(unittest.TestCase):
+    def test_failed_stop_exits_for_systemd_restart(self):
+        cam = FakeCamera()
+        output = server.StreamingOutput(cam, 5)
+        output.add_viewer()
+        cam.stop = lambda: (_ for _ in ()).throw(RuntimeError("wedged"))
+        exits = []
+        old = server.os._exit
+        server.os._exit = exits.append
+        self.addCleanup(setattr, server.os, "_exit", old)
+        output.remove_viewer()
+        self.assertEqual(exits, [1])
+        cam._running.clear()
+
+
 class ConfigTest(unittest.TestCase):
     def write(self, text):
         f = tempfile.NamedTemporaryFile("w", delete=False, newline="")
@@ -168,6 +189,22 @@ class ConfigTest(unittest.TestCase):
         f.close()
         self.addCleanup(os.unlink, f.name)
         return f.name
+
+    def test_get_cli_prints_literal_value(self):
+        path = self.write("WIFI_PASSWORD='a$b`c\"d'\n")
+        env = dict(os.environ, BABYMONITOR_CONFIG=path)
+        run = lambda key: subprocess.run(
+            [sys.executable, server.__file__, "--get", key], env=env, capture_output=True, text=True, check=True
+        ).stdout
+        self.assertEqual(run("WIFI_PASSWORD"), 'a$b`c"d\n')
+        self.assertEqual(run("MISSING"), "\n")
+
+    def test_bom_is_ignored(self):
+        cfg = server.load_config(self.write("\ufeffWIFI_SSID=home\n"))
+        self.assertEqual(cfg["WIFI_SSID"], "home")
+
+    def test_invalid_number_falls_back_to_default(self):
+        self.assertEqual(server.number({"PORT": "80x0"}, "PORT"), 8000)
 
     def test_missing_file_gives_defaults(self):
         cfg = server.load_config("/nonexistent/babymonitor.conf")
