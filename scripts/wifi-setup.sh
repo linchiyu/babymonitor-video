@@ -10,8 +10,7 @@ CON=babymonitor-wifi
 # Read a key with the server's literal parser - never `source` the file, so passwords
 # containing $, backticks or quotes are passed through unchanged.
 get() {
-  python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from server import load_config; print(load_config(sys.argv[2]).get(sys.argv[3], ""))' \
-    "$APP_DIR" "$CONFIG" "$1"
+  BABYMONITOR_CONFIG=$CONFIG python3 "$APP_DIR/server.py" --get "$1"
 }
 
 SSID=$(get WIFI_SSID)

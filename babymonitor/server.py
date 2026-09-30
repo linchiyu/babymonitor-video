@@ -4,6 +4,7 @@ import io
 import logging
 import os
 import socketserver
+import sys
 import threading
 from http import server
 
@@ -110,8 +111,6 @@ class PiCamera:
 
 
 class StreamingHandler(server.BaseHTTPRequestHandler):
-    output = None  # set per server by make_server
-
     def do_GET(self):
         if self.path == "/":
             self.send_response(200)
@@ -125,7 +124,8 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
             self.send_error(404)
 
     def stream(self):
-        if not self.output.add_viewer():
+        output = self.server.output
+        if not output.add_viewer():
             self.send_error(503, "Camera unavailable or too many viewers")
             return
         try:
@@ -136,18 +136,16 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=FRAME")
             self.end_headers()
             while True:
-                frame = self.output.wait_frame(FRAME_TIMEOUT)
+                frame = output.wait_frame(FRAME_TIMEOUT)
                 if frame is None:
                     log.warning("no frame from camera for %ss, dropping viewer", FRAME_TIMEOUT)
                     break
-                self.wfile.write(b"--FRAME\r\nContent-Type: image/jpeg\r\n")
-                self.wfile.write(b"Content-Length: %d\r\n\r\n" % len(frame))
-                self.wfile.write(frame)
-                self.wfile.write(b"\r\n")
+                header = b"--FRAME\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(frame)
+                self.wfile.write(header + frame + b"\r\n")  # wfile is unbuffered: one syscall per frame
         except OSError as e:  # includes socket timeouts from dead or stalled clients
             log.info("viewer %s left: %s", self.client_address[0], e)
         finally:
-            self.output.remove_viewer()
+            output.remove_viewer()
             self.close_connection = True
 
 
@@ -159,13 +157,17 @@ class StreamingServer(server.ThreadingHTTPServer):
 
 
 def make_server(output, port):
-    handler = type("Handler", (StreamingHandler,), {"output": output})
-    return StreamingServer(("", port), handler)
+    httpd = StreamingServer(("", port), StreamingHandler)
+    httpd.output = output
+    return httpd
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     cfg = load_config(os.environ.get("BABYMONITOR_CONFIG", DEFAULT_CONFIG))
+    if sys.argv[1:2] == ["--get"]:  # lets the shell scripts share this parser instead of `source`
+        print(cfg.get(sys.argv[2], ""))
+        return
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     camera = PiCamera(int(cfg["WIDTH"]), int(cfg["HEIGHT"]))
     output = StreamingOutput(camera, int(cfg["MAX_VIEWERS"]))
     httpd = make_server(output, int(cfg["PORT"]))

@@ -33,7 +33,7 @@ systemctl enable babymonitor-wifi.service
 systemctl enable babymonitor.service
 systemctl restart babymonitor.service
 
-PORT=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from server import load_config; print(load_config(sys.argv[2])["PORT"])' "$APP" "$CONFIG")
+PORT=$(BABYMONITOR_CONFIG=$CONFIG python3 "$APP/server.py" --get PORT)
 cat <<EOF
 
 Installed. The stream is running now and starts automatically on every boot.
