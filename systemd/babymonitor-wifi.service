@@ -1,0 +1,13 @@
+[Unit]
+Description=Baby monitor: apply Wi-Fi settings from babymonitor.conf
+Requires=NetworkManager.service
+After=NetworkManager.service
+Before=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/babymonitor/wifi-setup.sh
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

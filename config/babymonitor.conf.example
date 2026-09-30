@@ -1,0 +1,17 @@
+# Baby monitor settings.
+# Lives on the SD card boot partition (/boot/firmware/babymonitor.conf), so you can
+# edit it from any computer. Reboot the Pi after changing it.
+# Format: KEY=value, one per line. Values are taken literally (no shell expansion);
+# surrounding quotes are optional.
+
+# Wi-Fi the Pi joins on every boot. Leave WIFI_SSID empty to keep the current Wi-Fi.
+WIFI_SSID=
+WIFI_PASSWORD=
+# Two-letter country code (US, GB, DE, ...) - required for Wi-Fi to work on the Pi.
+WIFI_COUNTRY=US
+
+# Stream: open http://<pi-address>:PORT/ on your local network.
+PORT=8000
+WIDTH=1280
+HEIGHT=720
+MAX_VIEWERS=5
