@@ -1,0 +1,17 @@
+[Unit]
+Description=Baby monitor camera stream
+
+[Service]
+User=babymonitor
+SupplementaryGroups=video
+Environment=BABYMONITOR_CONFIG=/boot/firmware/babymonitor.conf
+ExecStart=/usr/bin/python3 /opt/babymonitor/server.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
