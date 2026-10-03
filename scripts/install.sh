@@ -1,6 +1,7 @@
 #!/bin/bash
 # Install the baby monitor on Raspberry Pi OS (Bookworm or newer).
 # Usage: sudo ./scripts/install.sh    (safe to re-run; never overwrites your config)
+#        sudo RESET_CONFIG=1 ./scripts/install.sh    (replace config with the example; old one kept as .bak)
 set -euo pipefail
 
 [ "$(id -u)" -eq 0 ] || { echo "Please run with sudo: sudo $0"; exit 1; }
@@ -21,6 +22,10 @@ id babymonitor >/dev/null 2>&1 ||
 install -d "$APP"
 install -m 644 "$REPO/babymonitor/server.py" "$APP/server.py"
 install -m 755 "$REPO/scripts/wifi-setup.sh" "$APP/wifi-setup.sh"
+if [ "${RESET_CONFIG:-}" = 1 ] && [ -f "$CONFIG" ]; then
+  mv "$CONFIG" "$CONFIG.bak"
+  echo "Moved the old config to $CONFIG.bak (copy your Wi-Fi settings back from it)."
+fi
 if [ ! -f "$CONFIG" ]; then
   cp "$REPO/config/babymonitor.conf.example" "$CONFIG"
   echo "Created $CONFIG - set WIFI_SSID and WIFI_PASSWORD there."
