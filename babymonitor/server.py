@@ -123,16 +123,17 @@ class PiCamera:
     def __init__(self, width, height):
         from picamera2 import Picamera2  # only on the Pi; tests use a fake camera
 
-        self.picam2 = Picamera2()
-        self.picam2.configure(self.picam2.create_video_configuration(main={"size": (width, height), "format": "XBGR8888"}))
+        # NoIR module (no infrared filter): the stock tuning's white balance turns everything blue,
+        # the NoIR tuning uses grey-world white balance instead.
+        # ponytail: hard-coded to the IMX219 NoIR; another camera module needs its own tuning file.
+        self.picam2 = Picamera2(tuning=Picamera2.load_tuning_file("imx219_noir.json"))
+        self.picam2.configure(self.picam2.create_video_configuration(main={"size": (width, height)}))
 
     def start(self, output):
         from picamera2.encoders import JpegEncoder
         from picamera2.outputs import FileOutput
 
-        # XBGR8888 is R,G,B,X in memory, but picamera2 encoded it as BGR here (blue picture),
-        # so tell the encoder the swapped order. If it ever turns orange, change BGRX to RGBX.
-        self.picam2.start_recording(JpegEncoder(colour_space="BGRX"), FileOutput(output))
+        self.picam2.start_recording(JpegEncoder(), FileOutput(output))
 
     def stop(self):
         self.picam2.stop_recording()
