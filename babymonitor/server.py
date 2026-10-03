@@ -24,8 +24,10 @@ img{position:absolute;top:50%;left:50%;width:100vw;height:100vh;object-fit:conta
 transform:translate(-50%,-50%) rotate(var(--r,0deg)) scaleX(var(--f,1))}
 img.side{width:100vh;height:100vw}
 #c{position:fixed;right:12px;bottom:12px;display:flex;gap:8px}
-button{font:20px sans-serif;padding:10px 14px;border:0;border-radius:8px;background:#fff3;color:#fff}</style></head>
-<body><img id="v" src="/stream.mjpg" alt="Live camera">
+button{font:20px sans-serif;padding:10px 14px;border:0;border-radius:8px;background:#fff3;color:#fff}
+#m{position:fixed;inset:0;pointer-events:none;box-shadow:inset 0 0 0 10px red;opacity:0;transition:opacity .3s}
+#m.on{opacity:1}</style></head>
+<body><img id="v" src="/stream.mjpg" alt="Live camera"><div id="m"></div>
 <div id="c"><button id="flip" aria-label="Flip">&#8646;</button><button id="rot" aria-label="Rotate 90 degrees">&#8635;</button></div>
 <script>
 // Reconnect if the stream drops (Pi rebooted, Wi-Fi blip, camera restart).
@@ -44,6 +46,27 @@ function apply() {
 document.getElementById("flip").onclick = () => { f = -f; apply(); };
 document.getElementById("rot").onclick = () => { r = (r + 90) % 360; apply(); };
 apply();
+// Motion: compare tiny grayscale copies of the frame twice a second; red frame while it moves.
+// ponytail: fixed thresholds, tune PIXEL_DIFF (noise per pixel) / MOVED (share of pixels) if it
+// fires on sensor noise or misses small movements.
+const PIXEL_DIFF = 25, MOVED = 0.01, HOLD_MS = 2000;
+const cv = document.createElement("canvas"), cx = cv.getContext("2d", { willReadFrequently: true });
+const m = document.getElementById("m");
+cv.width = 64; cv.height = 48;
+let prev = null, lastMotion = 0;
+setInterval(() => {
+  if (!v.complete || !v.naturalWidth) return;
+  cx.drawImage(v, 0, 0, cv.width, cv.height);
+  const d = cx.getImageData(0, 0, cv.width, cv.height).data, gray = new Uint8Array(d.length / 4);
+  for (let i = 0; i < gray.length; i++) gray[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 3;
+  if (prev) {
+    let moved = 0;
+    for (let i = 0; i < gray.length; i++) if (Math.abs(gray[i] - prev[i]) > PIXEL_DIFF) moved++;
+    if (moved > gray.length * MOVED) lastMotion = Date.now();
+  }
+  prev = gray;
+  m.classList.toggle("on", Date.now() - lastMotion < HOLD_MS);
+}, 500);
 </script></body></html>
 """
 
