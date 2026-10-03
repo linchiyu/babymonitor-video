@@ -33,8 +33,8 @@ button{font:20px sans-serif;padding:10px 14px;border:0;border-radius:8px;backgro
 const v = document.getElementById("v");
 v.onerror = () => setTimeout(() => { v.src = "/stream.mjpg?" + Date.now(); }, 2000);
 // Flip/rotate are per-device view settings, remembered in this browser.
-let r = 0, f = 1;
-try { r = +localStorage.r || 0; f = +localStorage.f || 1; } catch (e) {}
+let r = 90, f = 1;  // default: camera is mounted sideways
+try { r = +(localStorage.r ?? 90); f = +localStorage.f || 1; } catch (e) {}
 function apply() {
   v.style.setProperty("--r", r + "deg");
   v.style.setProperty("--f", f);
