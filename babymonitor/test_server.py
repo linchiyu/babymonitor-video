@@ -204,11 +204,11 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg["WIFI_SSID"], "home")
 
     def test_invalid_number_falls_back_to_default(self):
-        self.assertEqual(server.number({"PORT": "80x0"}, "PORT"), 8000)
+        self.assertEqual(server.number({"PORT": "80x0"}, "PORT"), 80)
 
     def test_missing_file_gives_defaults(self):
         cfg = server.load_config("/nonexistent/babymonitor.conf")
-        self.assertEqual(cfg["PORT"], "8000")
+        self.assertEqual(cfg["PORT"], "80")
 
     def test_literal_parsing(self):
         path = self.write(

@@ -4,6 +4,8 @@ Description=Baby monitor camera stream
 [Service]
 User=babymonitor
 SupplementaryGroups=video
+# Lets the unprivileged user bind port 80 (http://babymonitor.local with no port).
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 Environment=BABYMONITOR_CONFIG=/boot/firmware/babymonitor.conf
 ExecStart=/usr/bin/python3 /opt/babymonitor/server.py
 Restart=always

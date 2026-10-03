@@ -12,24 +12,40 @@ from urllib.parse import urlsplit
 log = logging.getLogger("babymonitor")
 
 DEFAULT_CONFIG = "/boot/firmware/babymonitor.conf"
-DEFAULTS = {"PORT": "8000", "WIDTH": "1280", "HEIGHT": "720", "MAX_VIEWERS": "5"}
+DEFAULTS = {"PORT": "80", "WIDTH": "1280", "HEIGHT": "720", "MAX_VIEWERS": "5"}
 FRAME_TIMEOUT = 5  # seconds without a frame before a viewer is dropped
 WRITE_TIMEOUT = 10  # seconds a stalled/dead client may block a write
 
 PAGE = b"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Baby Monitor</title>
-<style>html,body{margin:0;height:100%;background:#000}
-img{display:block;width:100%;height:100%;object-fit:contain}</style></head>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}
+img{position:absolute;top:50%;left:50%;width:100vw;height:100vh;object-fit:contain;
+transform:translate(-50%,-50%) rotate(var(--r,0deg)) scaleX(var(--f,1))}
+img.side{width:100vh;height:100vw}
+#c{position:fixed;right:12px;bottom:12px;display:flex;gap:8px}
+button{font:20px sans-serif;padding:10px 14px;border:0;border-radius:8px;background:#fff3;color:#fff}</style></head>
 <body><img id="v" src="/stream.mjpg" alt="Live camera">
+<div id="c"><button id="flip" aria-label="Flip">&#8646;</button><button id="rot" aria-label="Rotate 90 degrees">&#8635;</button></div>
 <script>
 // Reconnect if the stream drops (Pi rebooted, Wi-Fi blip, camera restart).
 // ponytail: relies on the browser firing onerror; a stream that ends cleanly may just freeze.
 const v = document.getElementById("v");
 v.onerror = () => setTimeout(() => { v.src = "/stream.mjpg?" + Date.now(); }, 2000);
+// Flip/rotate are per-device view settings, remembered in this browser.
+let r = 0, f = 1;
+try { r = +localStorage.r || 0; f = +localStorage.f || 1; } catch (e) {}
+function apply() {
+  v.style.setProperty("--r", r + "deg");
+  v.style.setProperty("--f", f);
+  v.classList.toggle("side", r % 180 !== 0);
+  try { localStorage.r = r; localStorage.f = f; } catch (e) {}
+}
+document.getElementById("flip").onclick = () => { f = -f; apply(); };
+document.getElementById("rot").onclick = () => { r = (r + 90) % 360; apply(); };
+apply();
 </script></body></html>
 """
-
 
 def load_config(path):
     """Parse KEY=value lines literally: no shell expansion, one layer of quotes stripped."""
@@ -108,13 +124,15 @@ class PiCamera:
         from picamera2 import Picamera2  # only on the Pi; tests use a fake camera
 
         self.picam2 = Picamera2()
-        self.picam2.configure(self.picam2.create_video_configuration(main={"size": (width, height)}))
+        self.picam2.configure(self.picam2.create_video_configuration(main={"size": (width, height), "format": "XBGR8888"}))
 
     def start(self, output):
         from picamera2.encoders import JpegEncoder
         from picamera2.outputs import FileOutput
 
-        self.picam2.start_recording(JpegEncoder(), FileOutput(output))
+        # XBGR8888 is R,G,B,X in memory, but picamera2 encoded it as BGR here (blue picture),
+        # so tell the encoder the swapped order. If it ever turns orange, change BGRX to RGBX.
+        self.picam2.start_recording(JpegEncoder(colour_space="BGRX"), FileOutput(output))
 
     def stop(self):
         self.picam2.stop_recording()

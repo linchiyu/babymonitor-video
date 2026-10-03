@@ -10,8 +10,8 @@ WIFI_PASSWORD=
 # Two-letter country code (US, GB, DE, ...) - required for Wi-Fi to work on the Pi.
 WIFI_COUNTRY=US
 
-# Stream: open http://<pi-address>:PORT/ on your local network.
-PORT=8000
+# Stream: open http://<pi-address>/ (add :PORT if not 80) on your local network.
+PORT=80
 WIDTH=1280
 HEIGHT=720
 MAX_VIEWERS=5

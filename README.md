@@ -13,7 +13,7 @@ Live video from a Raspberry Pi camera in any browser on your local network. The 
    cd babymonitor-video
    sudo ./scripts/install.sh
    ```
-4. **Open** `http://babymonitor.local:8000/` (or `http://<pi-ip>:8000/`) from a phone or computer on the same network.
+4. **Open** `http://babymonitor.local/` (or `http://<pi-ip>/`) from a phone or computer on the same network.
 
 Everything starts automatically on every boot.
 
@@ -39,7 +39,7 @@ The same file also sets `PORT`, `WIDTH`, `HEIGHT`, and `MAX_VIEWERS`.
 
 ## Security
 
-There is no password on the stream. Anyone on your local network who knows the address can watch. Do not expose port 8000 to the internet.
+There is no password on the stream. Anyone on your local network who knows the address can watch. Do not expose port 80 to the internet.
 
 ## Development
 
