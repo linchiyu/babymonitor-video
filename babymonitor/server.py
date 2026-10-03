@@ -6,6 +6,7 @@ import os
 import socketserver
 import sys
 import threading
+import time
 from http import server
 from urllib.parse import urlsplit
 
@@ -25,10 +26,13 @@ transform:translate(-50%,-50%) rotate(var(--r,0deg)) scaleX(var(--f,1))}
 img.side{width:100vh;height:100vw}
 #c{position:fixed;right:12px;bottom:12px;display:flex;gap:8px}
 button{font:20px sans-serif;padding:10px 14px;border:0;border-radius:8px;background:#fff3;color:#fff}
+label{display:flex;align-items:center;gap:6px;font:14px sans-serif;color:#fff;padding:0 10px;border-radius:8px;background:#fff3}
 #m{position:fixed;inset:0;pointer-events:none;box-shadow:inset 0 0 0 10px red;opacity:0;transition:opacity .3s}
-#m.on{opacity:1}</style></head>
-<body><img id="v" src="/stream.mjpg" alt="Live camera"><div id="m"></div>
-<div id="c"><button id="flip" aria-label="Flip">&#8646;</button><button id="rot" aria-label="Rotate 90 degrees">&#8635;</button></div>
+#m.on{opacity:1}
+#t{position:fixed;left:12px;top:12px;font:16px/1.4 sans-serif;color:#fff;text-shadow:0 0 4px #000}</style></head>
+<body><img id="v" src="/stream.mjpg" alt="Live camera"><div id="m"></div><div id="t"></div>
+<div id="c"><button id="flip" aria-label="Flip">&#8646;</button><button id="rot" aria-label="Rotate 90 degrees">&#8635;</button>
+<label>Motion <input id="sens" type="range" min="1" max="10" value="5" aria-label="Motion sensitivity"></label></div>
 <script>
 // Reconnect if the stream drops (Pi rebooted, Wi-Fi blip, camera restart).
 // ponytail: relies on the browser firing onerror; a stream that ends cleanly may just freeze.
@@ -46,30 +50,60 @@ function apply() {
 document.getElementById("flip").onclick = () => { f = -f; apply(); };
 document.getElementById("rot").onclick = () => { r = (r + 90) % 360; apply(); };
 apply();
+// Clock and time since the Pi booted (it is switched on when the baby falls asleep).
+const t = document.getElementById("t");
+let bootAt = null;
+const pad = n => String(n).padStart(2, "0");
+function syncUptime() {
+  fetch("/uptime").then(r => r.text()).then(s => { bootAt = Date.now() - parseFloat(s) * 1000; }).catch(() => {});
+}
+setInterval(() => {
+  let up = "";
+  if (bootAt !== null) {
+    const s = Math.floor((Date.now() - bootAt) / 1000);
+    up = "<br>Asleep " + Math.floor(s / 3600) + ":" + pad(Math.floor(s / 60) % 60) + ":" + pad(s % 60);
+  }
+  t.innerHTML = new Date().toLocaleString() + up;
+}, 1000);
+syncUptime();
+setInterval(syncUptime, 60000);  // picks up a Pi reboot
 // Motion: compare a small grayscale copy of each frame against a slowly updated background.
-// The threshold follows the frame's own noise (the median change), so it works in a dark room
-// where a movement only shifts a few brightness levels, and ignores auto-exposure changes.
-// ponytail: tune MIN_DIFF / NOISE_X (per-pixel) and MOVED (share of pixels) if it is too jumpy or deaf.
-const MIN_DIFF = 4, NOISE_X = 3, MOVED = 0.002, BG_RATE = 0.2, HOLD_MS = 2000;
+// A pixel counts as moving only if it beats the frame's own noise (90th-percentile change) in two
+// checks in a row (JPEG/colour flicker hits random pixels each frame, a real movement stays put)
+const MIN_DIFF = 8, NOISE_X = 2, BG_RATE = 0.2, HOLD_MS = 2000;
 const cv = document.createElement("canvas"), cx = cv.getContext("2d", { willReadFrequently: true });
-const m = document.getElementById("m");
-cv.width = 160; cv.height = 120;
-let bg = null, lastMotion = 0;
-function motion(gray) {
-  if (!bg) { bg = Float32Array.from(gray); return false; }
+const m = document.getElementById("m"), sens = document.getElementById("sens");
+cv.width = 80; cv.height = 60;  // small on purpose: averaging blurs away JPEG block noise
+let bg = null, wasMoving = null, warmup = 8, lastMotion = 0;  // 8 checks = 2 s to learn the scene
+try { sens.value = localStorage.sens ?? sens.value; } catch (e) {}
+sens.oninput = () => { try { localStorage.sens = sens.value; } catch (e) {} };
+// Share of the picture that must move: 2% at sensitivity 1 down to ~0.02% (one pixel) at 10.
+const movedShare = () => 0.02 * Math.pow(0.6, sens.value - 1);
+function motion(gray, share) {
+  if (!bg) { bg = Float32Array.from(gray); wasMoving = new Uint8Array(gray.length); return false; }
   const diff = new Float32Array(gray.length);
   for (let i = 0; i < gray.length; i++) { diff[i] = Math.abs(gray[i] - bg[i]); bg[i] += (gray[i] - bg[i]) * BG_RATE; }
-  const limit = Math.max(MIN_DIFF, NOISE_X * diff.slice().sort()[diff.length >> 1]);
+  const limit = Math.max(MIN_DIFF, NOISE_X * diff.slice().sort()[Math.floor(diff.length * 0.9)]);
+  const hit = new Uint8Array(diff.length);
+  for (let i = 0; i < diff.length; i++) {
+    const now = diff[i] > limit ? 1 : 0;
+    hit[i] = now & wasMoving[i];
+    wasMoving[i] = now;
+  }
+  // ...and has a moving neighbour: a real movement is a patch, flicker is lone pixels.
+  const W = cv.width;
   let moved = 0;
-  for (let i = 0; i < diff.length; i++) if (diff[i] > limit) moved++;
-  return moved > diff.length * MOVED;
+  for (let i = 0; i < hit.length; i++)
+    if (hit[i] && (hit[i - 1] || hit[i + 1] || hit[i - W] || hit[i + W])) moved++;
+  if (warmup > 0) { warmup--; return false; }
+  return moved > diff.length * share;
 }
 setInterval(() => {
   if (!v.complete || !v.naturalWidth) return;
   cx.drawImage(v, 0, 0, cv.width, cv.height);
   const d = cx.getImageData(0, 0, cv.width, cv.height).data, gray = new Float32Array(d.length / 4);
   for (let i = 0; i < gray.length; i++) gray[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 3;
-  if (motion(gray)) lastMotion = Date.now();
+  if (motion(gray, movedShare())) lastMotion = Date.now();
   m.classList.toggle("on", Date.now() - lastMotion < HOLD_MS);
 }, 250);
 </script></body></html>
@@ -176,6 +210,15 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(PAGE)))
             self.end_headers()
             self.wfile.write(PAGE)
+        elif path == "/uptime":
+            # Seconds since boot (CLOCK_MONOTONIC counts from boot on Linux; the Pi never suspends).
+            body = b"%d" % time.monotonic()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif path == "/stream.mjpg":
             self.stream()
         else:

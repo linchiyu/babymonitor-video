@@ -92,6 +92,12 @@ class ServerTest(unittest.TestCase):
         conn.request("GET", "/nope")
         self.assertEqual(conn.getresponse().status, 404)
 
+    def test_uptime_is_whole_seconds(self):
+        self.start_server(FakeCamera())
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/uptime")
+        self.assertGreaterEqual(int(conn.getresponse().read()), 0)
+
     def test_camera_idle_until_watched_and_stops_after(self):
         cam = FakeCamera(frame=b"FRAMEDATA")
         self.start_server(cam)
