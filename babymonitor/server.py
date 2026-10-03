@@ -46,27 +46,32 @@ function apply() {
 document.getElementById("flip").onclick = () => { f = -f; apply(); };
 document.getElementById("rot").onclick = () => { r = (r + 90) % 360; apply(); };
 apply();
-// Motion: compare tiny grayscale copies of the frame twice a second; red frame while it moves.
-// ponytail: fixed thresholds, tune PIXEL_DIFF (noise per pixel) / MOVED (share of pixels) if it
-// fires on sensor noise or misses small movements.
-const PIXEL_DIFF = 25, MOVED = 0.01, HOLD_MS = 2000;
+// Motion: compare a small grayscale copy of each frame against a slowly updated background.
+// The threshold follows the frame's own noise (the median change), so it works in a dark room
+// where a movement only shifts a few brightness levels, and ignores auto-exposure changes.
+// ponytail: tune MIN_DIFF / NOISE_X (per-pixel) and MOVED (share of pixels) if it is too jumpy or deaf.
+const MIN_DIFF = 4, NOISE_X = 3, MOVED = 0.002, BG_RATE = 0.2, HOLD_MS = 2000;
 const cv = document.createElement("canvas"), cx = cv.getContext("2d", { willReadFrequently: true });
 const m = document.getElementById("m");
-cv.width = 64; cv.height = 48;
-let prev = null, lastMotion = 0;
+cv.width = 160; cv.height = 120;
+let bg = null, lastMotion = 0;
+function motion(gray) {
+  if (!bg) { bg = Float32Array.from(gray); return false; }
+  const diff = new Float32Array(gray.length);
+  for (let i = 0; i < gray.length; i++) { diff[i] = Math.abs(gray[i] - bg[i]); bg[i] += (gray[i] - bg[i]) * BG_RATE; }
+  const limit = Math.max(MIN_DIFF, NOISE_X * diff.slice().sort()[diff.length >> 1]);
+  let moved = 0;
+  for (let i = 0; i < diff.length; i++) if (diff[i] > limit) moved++;
+  return moved > diff.length * MOVED;
+}
 setInterval(() => {
   if (!v.complete || !v.naturalWidth) return;
   cx.drawImage(v, 0, 0, cv.width, cv.height);
-  const d = cx.getImageData(0, 0, cv.width, cv.height).data, gray = new Uint8Array(d.length / 4);
+  const d = cx.getImageData(0, 0, cv.width, cv.height).data, gray = new Float32Array(d.length / 4);
   for (let i = 0; i < gray.length; i++) gray[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 3;
-  if (prev) {
-    let moved = 0;
-    for (let i = 0; i < gray.length; i++) if (Math.abs(gray[i] - prev[i]) > PIXEL_DIFF) moved++;
-    if (moved > gray.length * MOVED) lastMotion = Date.now();
-  }
-  prev = gray;
+  if (motion(gray)) lastMotion = Date.now();
   m.classList.toggle("on", Date.now() - lastMotion < HOLD_MS);
-}, 500);
+}, 250);
 </script></body></html>
 """
 
