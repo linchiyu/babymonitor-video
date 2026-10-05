@@ -32,6 +32,10 @@ if [ ! -f "$CONFIG" ]; then
 fi
 
 install -m 644 "$REPO/systemd/babymonitor.service" "$REPO/systemd/babymonitor-wifi.service" /etc/systemd/system/
+# Hardware watchdog: reboots the Pi if the kernel or systemd itself hangs (15 s is the Pi's maximum).
+install -d /etc/systemd/system.conf.d
+printf '[Manager]\nRuntimeWatchdogSec=15\n' > /etc/systemd/system.conf.d/babymonitor-watchdog.conf
+systemctl daemon-reexec
 systemctl daemon-reload
 # Wi-Fi applies on the next boot: switching networks now could drop this SSH session mid-install.
 systemctl enable babymonitor-wifi.service

@@ -13,7 +13,8 @@ from urllib.parse import urlsplit
 log = logging.getLogger("babymonitor")
 
 DEFAULT_CONFIG = "/boot/firmware/babymonitor.conf"
-DEFAULTS = {"PORT": "80", "WIDTH": "1280", "HEIGHT": "720", "MAX_VIEWERS": "5"}
+DEFAULTS = {"PORT": "80", "WIDTH": "1280", "HEIGHT": "720", "MAX_VIEWERS": "5",
+            "BRIGHTNESS": "1.5", "RED_GAIN": "1.6", "BLUE_GAIN": "1.1"}
 FRAME_TIMEOUT = 5  # seconds without a frame before a viewer is dropped
 WRITE_TIMEOUT = 10  # seconds a stalled/dead client may block a write
 
@@ -29,15 +30,23 @@ button{font:20px sans-serif;padding:10px 14px;border:0;border-radius:8px;backgro
 label{display:flex;align-items:center;gap:6px;font:14px sans-serif;color:#fff;padding:0 10px;border-radius:8px;background:#fff3}
 #m{position:fixed;inset:0;pointer-events:none;box-shadow:inset 0 0 0 10px red;opacity:0;transition:opacity .3s}
 #m.on{opacity:1}
-#t{position:fixed;left:12px;top:12px;font:16px/1.4 sans-serif;color:#fff;text-shadow:0 0 4px #000}</style></head>
+#t{position:fixed;left:12px;top:12px;font:16px/1.4 sans-serif;color:#fff;text-shadow:0 0 4px #000}
+#s{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;
+font:24px/1.4 sans-serif;color:#fff;background:#000a}
+#s.on{display:flex}</style></head>
 <body><img id="v" src="/stream.mjpg" alt="Live camera"><div id="m"></div><div id="t"></div>
+<div id="s" role="alert">&#9888; No video from the camera<br>Reconnecting&hellip;</div>
 <div id="c"><button id="flip" aria-label="Flip">&#8646;</button><button id="rot" aria-label="Rotate 90 degrees">&#8635;</button>
 <label>Motion <input id="sens" type="range" min="1" max="10" value="5" aria-label="Motion sensitivity"></label></div>
 <script>
 // Reconnect if the stream drops (Pi rebooted, Wi-Fi blip, camera restart).
-// ponytail: relies on the browser firing onerror; a stream that ends cleanly may just freeze.
 const v = document.getElementById("v");
-v.onerror = () => setTimeout(() => { v.src = "/stream.mjpg?" + Date.now(); }, 2000);
+const reconnect = () => { v.src = "/stream.mjpg?" + Date.now(); };
+v.onerror = () => setTimeout(reconnect, 2000);
+// A stream that ends cleanly or stalls fires no event and just freezes on the last frame, so also
+// watch the pixels: a live camera never sends identical frames (sensor noise), a frozen one does.
+const STALL_MS = 5000, st = document.getElementById("s");
+let prev = null, lastChange = Date.now(), lastRetry = 0;
 // Flip/rotate are per-device view settings, remembered in this browser.
 let r = 90, f = 1;  // default: camera is mounted sideways
 try { r = +(localStorage.r ?? 90); f = +localStorage.f || 1; } catch (e) {}
@@ -99,9 +108,14 @@ function motion(gray, share) {
   return moved > diff.length * share;
 }
 setInterval(() => {
-  if (!v.complete || !v.naturalWidth) return;
+  const stalled = Date.now() - lastChange > STALL_MS;
+  st.classList.toggle("on", stalled);
+  if (stalled && Date.now() - lastRetry > STALL_MS) { lastRetry = Date.now(); reconnect(); }
+  if (!v.naturalWidth) return;
   cx.drawImage(v, 0, 0, cv.width, cv.height);
   const d = cx.getImageData(0, 0, cv.width, cv.height).data, gray = new Float32Array(d.length / 4);
+  if (!prev || d.some((x, i) => x !== prev[i])) lastChange = Date.now();
+  prev = d;
   for (let i = 0; i < gray.length; i++) gray[i] = (d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2]) / 3;
   if (motion(gray, movedShare())) lastMotion = Date.now();
   m.classList.toggle("on", Date.now() - lastMotion < HOLD_MS);
@@ -182,14 +196,26 @@ class StreamingOutput(io.BufferedIOBase):
 
 
 class PiCamera:
-    def __init__(self, width, height):
+    def __init__(self, width, height, brightness, red_gain, blue_gain):
         from picamera2 import Picamera2  # only on the Pi; tests use a fake camera
 
         # NoIR module (no infrared filter): the stock tuning's white balance turns everything blue,
         # the NoIR tuning uses grey-world white balance instead.
         # ponytail: hard-coded to the IMX219 NoIR; another camera module needs its own tuning file.
         self.picam2 = Picamera2(tuning=Picamera2.load_tuning_file("imx219_noir.json"))
-        self.picam2.configure(self.picam2.create_video_configuration(main={"size": (width, height)}))
+        from libcamera import controls
+
+        self.picam2.configure(self.picam2.create_video_configuration(main={"size": (width, height)}, controls={
+            # Dim nursery: brighten by EV stops, and let exposure stretch to 1/8 s (frame rate drops
+            # from 30 to ~8 fps in the dark) with the high-gain "long" mode instead of a black picture.
+            "ExposureValue": brightness,
+            "AeExposureMode": controls.AeExposureModeEnum.Long,
+            "FrameDurationLimits": (33333, 125000),
+            # Auto white balance still drifts blue on the NoIR sensor, so pin the colour gains.
+            # Tune RED_GAIN/BLUE_GAIN in the config: skin blue -> lower BLUE_GAIN, pink -> lower RED_GAIN.
+            "AwbEnable": False,
+            "ColourGains": (red_gain, blue_gain),
+        }))
 
     def start(self, output):
         from picamera2.encoders import JpegEncoder
@@ -263,12 +289,12 @@ def make_server(output, port):
     return httpd
 
 
-def number(cfg, key):
+def number(cfg, key, cast=int):
     try:
-        return int(cfg[key])
+        return cast(cfg[key])
     except ValueError:
         log.error("invalid %s=%r in config, using %s", key, cfg[key], DEFAULTS[key])
-        return int(DEFAULTS[key])
+        return cast(DEFAULTS[key])
 
 
 def main():
@@ -278,7 +304,8 @@ def main():
         return
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     port = number(cfg, "PORT")
-    camera = PiCamera(number(cfg, "WIDTH"), number(cfg, "HEIGHT"))
+    camera = PiCamera(number(cfg, "WIDTH"), number(cfg, "HEIGHT"), number(cfg, "BRIGHTNESS", float),
+                      number(cfg, "RED_GAIN", float), number(cfg, "BLUE_GAIN", float))
     output = StreamingOutput(camera, number(cfg, "MAX_VIEWERS"))
     httpd = make_server(output, port)
     log.info("serving on port %s", port)

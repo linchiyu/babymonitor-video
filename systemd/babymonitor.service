@@ -1,5 +1,7 @@
 [Unit]
 Description=Baby monitor camera stream
+# Never give up restarting, however often it crashes.
+StartLimitIntervalSec=0
 
 [Service]
 User=babymonitor

@@ -15,3 +15,10 @@ PORT=80
 WIDTH=1280
 HEIGHT=720
 MAX_VIEWERS=5
+
+# Picture. BRIGHTNESS is in exposure stops (0 = camera default, 1.5 = brighter for a dim room, max 8).
+BRIGHTNESS=1.5
+# Fixed white balance. Skin looks blue -> lower BLUE_GAIN or raise RED_GAIN; too pink/orange -> the opposite.
+# Typical range 0.5-3.0.
+RED_GAIN=1.6
+BLUE_GAIN=1.1
